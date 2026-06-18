@@ -13,6 +13,7 @@ describe("Chinese vertical EPUB rendering", function()
     end)
 
     local function render_vertical_epub(sample_epub, screenshot_prefix, pages, render_dpi)
+        local options = type(render_dpi) == "table" and render_dpi or { render_dpi = render_dpi }
         DocSettings:open(sample_epub):purge()
         local readerui = ReaderUI:new{
             dimen = Screen:getSize(),
@@ -24,8 +25,14 @@ describe("Chinese vertical EPUB rendering", function()
             readerui:onClose()
         end)
         readerui.status.enabled = false
-        if render_dpi then
-            readerui.document:setRenderDPI(render_dpi)
+        if options.render_dpi then
+            readerui.document:setRenderDPI(options.render_dpi)
+        end
+        if options.font_size then
+            readerui.document:setFontSize(options.font_size)
+        end
+        if options.line_spacing then
+            readerui.document:setInterlineSpacePercent(options.line_spacing)
         end
         readerui.typeset:setChineseVerticalMode("on")
         UIManager:show(readerui)
@@ -163,6 +170,15 @@ describe("Chinese vertical EPUB rendering", function()
     it("should keep heading background on the vertical heading block", function()
         render_vertical_epub("spec/front/unit/data/chinese-vertical-heading-background.epub",
             "chinese_vertical_heading_background", 1)
+    end)
+
+    it("should keep wrapped vertical heading columns away from body text", function()
+        render_vertical_epub("spec/front/unit/data/chinese-vertical-heading-wrap-regression.epub",
+            "chinese_vertical_heading_wrap_regression", 3, {
+                font_size = 32,
+                line_spacing = 140,
+                render_dpi = 96,
+            })
     end)
 
     it("should keep vertical box model backgrounds and margins stable", function()
