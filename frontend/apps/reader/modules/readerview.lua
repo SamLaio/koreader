@@ -784,7 +784,7 @@ function ReaderView:recalculate()
         if self.footer_visible and not self.footer.settings.reclaim_height then
             self.visible_area.h = self.visible_area.h - self.footer:getHeight()
         end
-        if self.document.configurable.writing_direction == 0 then
+        if not self:isVerticalPageTurnRTL() and self.document.configurable.writing_direction == 0 then
             -- starts from left of page_area
             self.visible_area.x = self.page_area.x
         else
@@ -1063,7 +1063,7 @@ end
 
 function ReaderView:onPageChangeAnimation(forward)
     if Device:canDoSwipeAnimation() and G_reader_settings:isTrue("swipe_animations") then
-        if self.inverse_reading_order then forward = not forward end
+        if self:isMirroredPageTurn() then forward = not forward end
         Screen:setSwipeAnimations(true)
         Screen:setSwipeDirection(forward)
     end
@@ -1332,6 +1332,21 @@ function ReaderView:setupTouchZones()
     (self.ui.rolling or self.ui.paging):setupTouchZones()
 end
 
+function ReaderView:isVerticalPageTurnRTL()
+    return self.document
+        and self.document.isVerticalWritingMode
+        and self.document:isVerticalWritingMode()
+        and self.document.configurable
+        and self.document.configurable.vertical_page_turn == "rtl"
+end
+
+function ReaderView:isMirroredPageTurn()
+    if self:isVerticalPageTurnRTL() then
+        return true
+    end
+    return self.inverse_reading_order ~= BD.mirroredUILayout()
+end
+
 function ReaderView:onToggleReadingOrder(toggle)
     if toggle == nil then
         toggle = not self.inverse_reading_order
@@ -1391,7 +1406,7 @@ function ReaderView:getTapZones()
             }
         end
     end
-    if self.inverse_reading_order ~= BD.mirroredUILayout() then -- mirrored reading
+    if self:isMirroredPageTurn() then -- mirrored reading
         forward_zone.ratio_x = 1 - forward_zone.ratio_x - forward_zone.ratio_w
         backward_zone.ratio_x = 1 - backward_zone.ratio_x - backward_zone.ratio_w
     end

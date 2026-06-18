@@ -24,6 +24,13 @@ local math_floor = math.floor
 
 local ReaderKeySelection = InputContainer:extend{}
 
+function ReaderKeySelection:_isVerticalWritingMode()
+    return self.ui
+        and self.ui.document
+        and self.ui.document.isVerticalWritingMode
+        and self.ui.document:isVerticalWritingMode()
+end
+
 function ReaderKeySelection:init()
     if Device:isTouchDevice() and not Device:hasDPad() then
         return
@@ -499,6 +506,10 @@ function ReaderKeySelection:_resolveSplitWordFromX(word, x_pos)
 end
 
 function ReaderKeySelection:_moveIndicatorCreDoc(current_word, dx, dy, steps, no_wrap_horizontal, preferred_center_x)
+    if self:_isVerticalWritingMode() then
+        return self:_moveIndicatorCreDocVertical(current_word, dx, dy, steps, preferred_center_x)
+    end
+
     local target_word = current_word
     local did_move = false
     local lock_line_center_y
@@ -551,6 +562,36 @@ function ReaderKeySelection:_moveIndicatorCreDoc(current_word, dx, dy, steps, no
 
         if not step_word then
             -- Set the edge cache: We've hit a physical or logical wall.
+            self._edge_dx, self._edge_dy = dx, dy
+            break
+        end
+        self._edge_dx, self._edge_dy = nil, nil
+        target_word = step_word
+        did_move = true
+    end
+
+    if did_move then
+        self:_setIndicatorToWord(target_word)
+    end
+    return did_move
+end
+
+function ReaderKeySelection:_moveIndicatorCreDocVertical(current_word, dx, dy, steps, preferred_center_y)
+    local target_word = current_word
+    local did_move = false
+    preferred_center_y = preferred_center_y
+        or (self._current_indicator_pos and (self._current_indicator_pos.y + self._current_indicator_pos.h * 0.5))
+
+    for _ = 1, steps do
+        local step_word
+        if dy ~= 0 then
+            -- In vertical writing, the inline flow is top-to-bottom inside the same column.
+            step_word = self:_getAdjacentWordRolling(target_word, dy)
+        elseif dx ~= 0 then
+            -- Columns progress right-to-left for vertical-rl.
+            step_word = self:_getAdjacentColumnWordRolling(target_word, dx, preferred_center_y)
+        end
+        if not step_word then
             self._edge_dx, self._edge_dy = dx, dy
             break
         end
@@ -913,6 +954,53 @@ function ReaderKeySelection:_getAdjacentLineWordRolling(word, direction, preferr
     end
 
     return best_word
+end
+
+function ReaderKeySelection:_getAdjacentColumnWordRolling(word, direction, preferred_center_y)
+    if not (word and word.pos0 and word.sbox) then return end
+
+    local doc = self.ui.document
+    local target_y = preferred_center_y or (word.sbox.y + word.sbox.h * 0.5)
+    local valid_xp = doc:isXPointerInCurrentPage(word.pos0) and word.pos0 or word.pos1
+    local _, start_sx = doc:getScreenPositionFromXPointer(valid_xp)
+    start_sx = start_sx or (word.sbox.x + word.sbox.w * 0.5)
+
+    local logical_dir = direction < 0 and 1 or -1
+    local column_tol = math_max(1, (word.sbox.w > 0 and word.sbox.w or Size.item.height_default) * 0.5)
+    local current_xp = word.pos0
+    local target_column_x, fallback_sx, fallback_sy = nil, nil, nil
+
+    for _ = 1, 120 do
+        local next_xp = logical_dir > 0 and doc:getNextVisibleWordStart(current_xp) or doc:getPrevVisibleWordStart(current_xp)
+        if not next_xp or next_xp == current_xp then
+            break
+        end
+        current_xp = next_xp
+        if not doc:isXPointerInCurrentPage(next_xp) then
+            break
+        end
+
+        local sy, sx = doc:getScreenPositionFromXPointer(next_xp)
+        if not sy or not sx then break end
+        local is_new_column = (direction < 0 and sx < start_sx - column_tol)
+            or (direction > 0 and sx > start_sx + column_tol)
+        if is_new_column then
+            target_column_x, fallback_sx, fallback_sy = sx, sx, sy
+            break
+        end
+    end
+
+    local probe = {
+        x = target_column_x or (start_sx + direction * Size.item.height_default),
+        y = target_y,
+    }
+    local probe_word = doc:getWordFromPosition(probe, true)
+    if probe_word and probe_word.sbox and probe_word.pos0 ~= word.pos0 then
+        return probe_word
+    end
+    if fallback_sx and fallback_sy then
+        return doc:getWordFromPosition({ x = fallback_sx, y = fallback_sy }, true)
+    end
 end
 
 function ReaderKeySelection:_moveIndicatorFreeFormPaging(dx, dy, quick_move)

@@ -20,8 +20,82 @@ local ReaderTypeset = WidgetContainer:extend{
     unscaled_margins = nil,
 }
 
+local CHINESE_VERTICAL_MODE_VALUES = {
+    off = true,
+    auto = true,
+    on = true,
+}
+
+local VERTICAL_PAGE_TURN_VALUES = {
+    ltr = true,
+    rtl = true,
+}
+
+local CHINESE_VERTICAL_PROFILE_DEFAULTS = {
+    text_lang = "zh-Hant",
+    text_lang_embedded_langs = true,
+    hyphenation = false,
+    hyph_soft_hyphens_only = false,
+    hyph_force_algorithmic = false,
+    cjk_width_scaling = 100,
+    line_spacing = 110,
+    word_spacing = { 95, 100 },
+    word_expansion = 0,
+    h_page_margins = G_defaults:readSetting("DCREREADER_CONFIG_H_MARGIN_SIZES_MEDIUM"),
+    t_page_margin = G_defaults:readSetting("DCREREADER_CONFIG_T_MARGIN_SIZES_MEDIUM"),
+    b_page_margin = G_defaults:readSetting("DCREREADER_CONFIG_B_MARGIN_SIZES_MEDIUM"),
+    sync_t_b_page_margins = 0,
+}
+
 function ReaderTypeset:init()
     self.ui.menu:registerToMainMenu(self)
+end
+
+function ReaderTypeset:normalizeChineseVerticalMode(mode)
+    if mode == true then
+        return "on"
+    elseif mode == false or mode == nil then
+        return "off"
+    end
+    mode = tostring(mode)
+    if CHINESE_VERTICAL_MODE_VALUES[mode] then
+        return mode
+    end
+    return "off"
+end
+
+function ReaderTypeset:setVerticalPageTurn(mode)
+    mode = tostring(mode or "rtl")
+    if not VERTICAL_PAGE_TURN_VALUES[mode] then
+        mode = "rtl"
+    end
+    self.configurable.vertical_page_turn = mode
+end
+
+function ReaderTypeset:getChineseVerticalAutoDetected(config)
+    config = config or self.ui.doc_settings
+    if config then
+        local cached = config:readSetting("chinese_vertical_auto_detected")
+        if cached ~= nil then
+            self.chinese_vertical_auto_detected = cached and true or false
+            self.chinese_vertical_auto_detect_reason = config:readSetting("chinese_vertical_auto_detect_reason")
+            return self.chinese_vertical_auto_detected, self.chinese_vertical_auto_detect_reason
+        end
+    end
+
+    local detected = false
+    local reason = "unsupported-document"
+    if self.ui.document.detectChineseVerticalMode then
+        detected, reason = self.ui.document:detectChineseVerticalMode()
+        detected = detected and true or false
+    end
+    self.chinese_vertical_auto_detected = detected
+    self.chinese_vertical_auto_detect_reason = reason
+    if config then
+        config:saveSetting("chinese_vertical_auto_detected", detected)
+        config:saveSetting("chinese_vertical_auto_detect_reason", reason)
+    end
+    return detected, reason
 end
 
 function ReaderTypeset:onReadSettings(config)
@@ -62,6 +136,18 @@ function ReaderTypeset:onReadSettings(config)
         self.configurable.block_rendering_mode = self.block_rendering_mode
     end
     self:setBlockRenderingMode(self.block_rendering_mode)
+
+    self:setVerticalPageTurn(self.configurable.vertical_page_turn)
+    local chinese_vertical_mode = self:normalizeChineseVerticalMode(self.configurable.chinese_vertical_mode)
+    if self.configurable.chinese_vertical_mode ~= chinese_vertical_mode then
+        self.configurable.chinese_vertical_mode = chinese_vertical_mode
+        config:saveSetting("chinese_vertical_mode", chinese_vertical_mode)
+    end
+    if chinese_vertical_mode == "auto" then
+        self:getChineseVerticalAutoDetected(config)
+    end
+    self:setChineseVerticalMode(chinese_vertical_mode)
+    self:applyChineseVerticalProfileDefaults(config)
 
     -- default to 96 dpi
     self.ui.document:setRenderDPI(self.configurable.render_dpi)
@@ -161,6 +247,20 @@ end
 function ReaderTypeset:onSetBlockRenderingMode(mode)
     self:setBlockRenderingMode(mode)
     local text = T(_("Render mode set to: %1"), optionsutil:getOptionText("SetBlockRenderingMode", mode))
+    Notification:notify(text)
+    return true
+end
+
+function ReaderTypeset:onSetChineseVerticalMode(mode)
+    self:setChineseVerticalMode(mode)
+    local text = T(_("Chinese vertical mode set to: %1"), optionsutil:getOptionText("SetChineseVerticalMode", mode))
+    Notification:notify(text)
+    return true
+end
+
+function ReaderTypeset:onSetVerticalPageTurn(mode)
+    self:setVerticalPageTurn(mode)
+    local text = T(_("Vertical page turn set to: %1"), optionsutil:getOptionText("SetVerticalPageTurn", mode))
     Notification:notify(text)
     return true
 end
@@ -437,6 +537,70 @@ function ReaderTypeset:setBlockRenderingMode(mode)
     end
     self.ui.document:setBlockRenderingFlags(flags)
     self.ui:handleEvent(Event:new("UpdatePos"))
+end
+
+function ReaderTypeset:setChineseVerticalMode(mode)
+    mode = self:normalizeChineseVerticalMode(mode)
+    self.configurable.chinese_vertical_mode = mode
+    local effective_vertical = mode == "on" or (mode == "auto" and self:getChineseVerticalAutoDetected())
+    self.chinese_vertical_effective_mode = effective_vertical and "on" or "off"
+    if effective_vertical then
+        self.ui.document:setWritingMode("vertical-rl")
+        self.ui.document:setTextOrientation("mixed")
+    else
+        self.ui.document:setWritingMode("horizontal-tb")
+        self.ui.document:setTextOrientation("mixed")
+    end
+    self.ui:handleEvent(Event:new("UpdatePos"))
+end
+
+function ReaderTypeset:applyChineseVerticalProfileDefaults(config)
+    if self.chinese_vertical_effective_mode ~= "on" or not config
+        or config:readSetting("chinese_vertical_profile_defaults_applied") then
+        return
+    end
+
+    for name, value in pairs(CHINESE_VERTICAL_PROFILE_DEFAULTS) do
+        if config:hasNot(name) then
+            local stored_value = value
+            if type(value) == "table" then
+                stored_value = { value[1], value[2] }
+            end
+            config:saveSetting(name, stored_value)
+            self.configurable[name] = stored_value
+        end
+    end
+    config:saveSetting("chinese_vertical_profile_defaults_applied", true)
+    self.configurable.chinese_vertical_profile_defaults_applied = true
+
+    local document = self.ui.document
+    if document.setTextMainLang and self.configurable.text_lang then
+        document:setTextMainLang(self.configurable.text_lang)
+    end
+    if document.setTextEmbeddedLangs and self.configurable.text_lang_embedded_langs ~= nil then
+        document:setTextEmbeddedLangs(self.configurable.text_lang_embedded_langs)
+    end
+    if document.setTextHyphenation and self.configurable.hyphenation ~= nil then
+        document:setTextHyphenation(self.configurable.hyphenation)
+    end
+    if document.setTextHyphenationSoftHyphensOnly and self.configurable.hyph_soft_hyphens_only ~= nil then
+        document:setTextHyphenationSoftHyphensOnly(self.configurable.hyph_soft_hyphens_only)
+    end
+    if document.setTextHyphenationForceAlgorithmic and self.configurable.hyph_force_algorithmic ~= nil then
+        document:setTextHyphenationForceAlgorithmic(self.configurable.hyph_force_algorithmic)
+    end
+    if document.setCJKWidthScaling and self.configurable.cjk_width_scaling then
+        document:setCJKWidthScaling(self.configurable.cjk_width_scaling)
+    end
+    if document.setInterlineSpacePercent and self.configurable.line_spacing then
+        document:setInterlineSpacePercent(self.configurable.line_spacing)
+    end
+    if document.setWordSpacing and self.configurable.word_spacing then
+        document:setWordSpacing(self.configurable.word_spacing)
+    end
+    if document.setWordExpansion and self.configurable.word_expansion then
+        document:setWordExpansion(self.configurable.word_expansion)
+    end
 end
 
 function ReaderTypeset:ensureSanerBlockRenderingFlags(mode)

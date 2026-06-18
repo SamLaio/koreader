@@ -1765,7 +1765,7 @@ function ReaderHighlight:onHoldPan(_, ges)
         -- by (temporarily) switching to scroll mode when panning to the
         -- top left or bottom right corners.
         local mirrored_reading = BD.mirroredUILayout()
-        if self.view.inverse_reading_order then
+        if self.view:isMirroredPageTurn() then
             mirrored_reading = not mirrored_reading
         end
         local is_in_prev_page_corner, is_in_next_page_corner

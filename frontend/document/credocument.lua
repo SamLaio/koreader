@@ -5,6 +5,7 @@ local Document = require("document/document")
 local FontList = require("fontlist")
 local Geom = require("ui/geometry")
 local RenderImage = require("ui/renderimage")
+local Archiver = require("ffi/archiver")
 local Screen = require("device").screen
 local buffer = require("string.buffer")
 local ffi = require("ffi")
@@ -632,9 +633,9 @@ function CreDocument:getWordFromPosition(pos, do_not_draw_selection)
             -- convert to Geom so we can use Geom.boundingBox
             for i=1, #word_boxes do
                 local v = word_boxes[i]
-                word_boxes[i] = { x = v.x0,        y = v.y0,
-                                  w = v.x1 - v.x0, h = v.y1 - v.y0 }
+                word_boxes[i] = self:_makeScreenTextBox(v)
             end
+            self:_sortScreenTextBoxes(word_boxes)
             wordbox.sbox = Geom.boundingBox(word_boxes)
             if wordbox.sbox then
                 box_found = true
@@ -648,6 +649,15 @@ function CreDocument:getWordFromPosition(pos, do_not_draw_selection)
     -- Fully trust getTextFromPositions()
     if word_found and box_found then
         return wordbox
+    elseif self:isVerticalWritingMode() then
+        local nearest = self:getNearestWordAndBoxFromPosition(pos, 0)
+        if nearest and nearest.sbox then
+            local tolerance = math.max(8, self:getFontSize() * 0.75)
+            if pos.x >= nearest.sbox.x - tolerance and pos.x <= nearest.sbox.x + nearest.sbox.w + tolerance
+                    and pos.y >= nearest.sbox.y - tolerance and pos.y <= nearest.sbox.y + nearest.sbox.h + tolerance then
+                return nearest
+            end
+        end
     else
         return nil
     end
@@ -705,15 +715,11 @@ function CreDocument:getScreenBoxesFromPositions(pos0, pos1, get_segments)
         if word_boxes then
             for i = 1, #word_boxes do
                 local line_box = word_boxes[i]
-                table.insert(line_boxes, Geom:new{
-                    x = line_box.x0, y = line_box.y0,
-                    w = line_box.x1 - line_box.x0,
-                    h = line_box.y1 - line_box.y0,
-                })
+                table.insert(line_boxes, self:_makeScreenTextBox(line_box))
             end
         end
     end
-    return line_boxes
+    return self:_sortScreenTextBoxes(line_boxes)
 end
 
 function CreDocument:getNearestWordAndBoxFromPosition(pos, cpp_direction)
@@ -731,9 +737,9 @@ function CreDocument:getNearestWordAndBoxFromPosition(pos, cpp_direction)
         if word_boxes then
             for i = 1, #word_boxes do
                 local v = word_boxes[i]
-                word_boxes[i] = { x = v.x0,        y = v.y0,
-                                  w = v.x1 - v.x0, h = v.y1 - v.y0 }
+                word_boxes[i] = self:_makeScreenTextBox(v)
             end
+            self:_sortScreenTextBoxes(word_boxes)
             wordbox.sbox = Geom.boundingBox(word_boxes)
             if wordbox.sbox then
                 return wordbox
@@ -1323,6 +1329,184 @@ end
 function CreDocument:setCJKWidthScaling(value)
     logger.dbg("CreDocument: set cjk width scaling", value)
     self._document:setIntProperty("crengine.style.cjk.width.scale.percent", value or 100)
+end
+
+local function archivePathDirname(path)
+    return path:match("^(.*)/[^/]*$") or ""
+end
+
+local function normalizeArchivePath(path)
+    path = (path or ""):gsub("\\", "/")
+    local parts = {}
+    for part in path:gmatch("[^/]+") do
+        if part == ".." then
+            table.remove(parts)
+        elseif part ~= "." and part ~= "" then
+            table.insert(parts, part)
+        end
+    end
+    return table.concat(parts, "/")
+end
+
+local function joinArchivePath(base, href)
+    href = (href or ""):gsub("&amp;", "&"):gsub("%%20", " ")
+    if href:match("^/") then
+        return normalizeArchivePath(href:sub(2))
+    end
+    if base ~= "" then
+        href = base .. "/" .. href
+    end
+    return normalizeArchivePath(href)
+end
+
+local function extractArchiveText(arc, path)
+    local ok, text = pcall(function()
+        return arc:extractToMemory(path)
+    end)
+    if not ok or text == nil then
+        return nil
+    end
+    if type(text) ~= "string" then
+        text = tostring(text)
+    end
+    return text
+end
+
+local function hasVerticalWritingDeclaration(text)
+    if not text then
+        return false
+    end
+    text = text:lower()
+    return text:find("writing%-mode%s*:%s*vertical%-rl") ~= nil
+        or text:find("%-epub%-writing%-mode%s*:%s*vertical%-rl") ~= nil
+        or text:find("%-webkit%-writing%-mode%s*:%s*vertical%-rl") ~= nil
+end
+
+local function getAttr(tag, attr)
+    return tag:match(attr .. "%s*=%s*\"([^\"]+)\"")
+        or tag:match(attr .. "%s*=%s*'([^']+)'")
+end
+
+function CreDocument:detectChineseVerticalMode()
+    if not self.file or not self.file:lower():match("%.epub$") then
+        return false, "unsupported-document"
+    end
+
+    local arc = Archiver.Reader:new()
+    if not arc:open(self.file) then
+        return false, "archive-open-failed"
+    end
+
+    local ok, detected, reason = pcall(function()
+        local css_entries = {}
+        for entry in arc:iterate() do
+            if entry.mode == "file" then
+                local path = normalizeArchivePath(entry.path)
+                if path:lower():match("%.css$") then
+                    table.insert(css_entries, path)
+                end
+            end
+        end
+
+        local container = extractArchiveText(arc, "META-INF/container.xml")
+        local opf_path = container and (getAttr(container, "full%-path") or getAttr(container, "full-path"))
+        if opf_path then
+            opf_path = normalizeArchivePath(opf_path)
+            local opf = extractArchiveText(arc, opf_path)
+            if opf then
+                local opf_lower = opf:lower()
+                if opf_lower:find("page%-progression%-direction%s*=%s*\"rtl\"")
+                        or opf_lower:find("page%-progression%-direction%s*=%s*'rtl'") then
+                    return true, "page-progression-direction-rtl"
+                end
+                if hasVerticalWritingDeclaration(opf) then
+                    return true, "opf-writing-mode"
+                end
+
+                local opf_dir = archivePathDirname(opf_path)
+                for item in opf:gmatch("<item[^>]->") do
+                    local href = getAttr(item, "href")
+                    local media_type = getAttr(item, "media%-type") or getAttr(item, "media-type")
+                    if href and (media_type == "text/css" or href:lower():match("%.css$")) then
+                        local css_path = joinArchivePath(opf_dir, href)
+                        local css = extractArchiveText(arc, css_path)
+                        if hasVerticalWritingDeclaration(css) then
+                            return true, "stylesheet-writing-mode"
+                        end
+                    end
+                end
+            end
+        end
+
+        for _, css_path in ipairs(css_entries) do
+            local css = extractArchiveText(arc, css_path)
+            if hasVerticalWritingDeclaration(css) then
+                return true, "stylesheet-writing-mode"
+            end
+        end
+        return false, "not-detected"
+    end)
+    arc:close()
+
+    if not ok then
+        logger.warn("CreDocument: failed to auto-detect Chinese vertical mode:", detected)
+        return false, "scan-error"
+    end
+    return detected, reason
+end
+
+function CreDocument:_makeScreenTextBox(cre_box)
+    local x0 = math.min(cre_box.x0, cre_box.x1)
+    local y0 = math.min(cre_box.y0, cre_box.y1)
+    local x1 = math.max(cre_box.x0, cre_box.x1)
+    local y1 = math.max(cre_box.y0, cre_box.y1)
+    return Geom:new{
+        x = x0,
+        y = y0,
+        w = x1 - x0,
+        h = y1 - y0,
+    }
+end
+
+function CreDocument:_sortScreenTextBoxes(boxes)
+    if self:isVerticalWritingMode() then
+        table.sort(boxes, function(a, b)
+            local ax = a.x + a.w * 0.5
+            local bx = b.x + b.w * 0.5
+            if math.abs(ax - bx) > 1 then
+                return ax > bx
+            end
+            return a.y < b.y
+        end)
+    else
+        table.sort(boxes, function(a, b)
+            local ay = a.y + a.h * 0.5
+            local by = b.y + b.h * 0.5
+            if math.abs(ay - by) > 1 then
+                return ay < by
+            end
+            return a.x < b.x
+        end)
+    end
+    return boxes
+end
+
+function CreDocument:setWritingMode(mode)
+    mode = mode or "horizontal-tb"
+    logger.dbg("CreDocument: set writing mode", mode)
+    self._writing_mode = mode
+    self._document:setStringProperty("crengine.style.writing.mode", mode)
+end
+
+function CreDocument:setTextOrientation(mode)
+    mode = mode or "mixed"
+    logger.dbg("CreDocument: set text orientation", mode)
+    self._text_orientation = mode
+    self._document:setStringProperty("crengine.style.text.orientation", mode)
+end
+
+function CreDocument:isVerticalWritingMode()
+    return self._writing_mode == "vertical-rl" or self._writing_mode == "vertical-lr"
 end
 
 function CreDocument:setStyleSheet(new_css_file, appended_css_content )

@@ -837,6 +837,7 @@ function ReaderDictionary:onLookupWord(word, is_sane, boxes, highlight, link, di
     logger.dbg("dict lookup word:", word, boxes)
     -- escape quotes and other funny characters in word
     word = self:cleanSelection(word, is_sane)
+    word = self:cleanVerticalCJKSelection(word)
     logger.dbg("dict stripped word:", word)
     -- (If word ends up empty, we still do the lookup, which will give us
     -- a window with no result. This will ensure the normal cleanup of the
@@ -1129,6 +1130,21 @@ function ReaderDictionary:cleanSelection(text, is_sane)
         text = text:gsub("^%s+", "")
         text = text:gsub("%s+$", "")
     end
+    return text
+end
+
+function ReaderDictionary:cleanVerticalCJKSelection(text)
+    if not text or text == "" or not util.hasCJKChar(text) then
+        return text
+    end
+    local document = self.ui and self.ui.document
+    if not document
+        or not document.isVerticalWritingMode
+        or not document:isVerticalWritingMode() then
+        return text
+    end
+    text = text:gsub("%s+", "")
+    text = text:gsub("\u{3000}", "")
     return text
 end
 

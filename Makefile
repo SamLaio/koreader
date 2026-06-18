@@ -7,12 +7,15 @@ KOR_BASE ?= base
 include $(KOR_BASE)/Makefile.defs
 
 RELEASE_DATE := $(shell git show -s --format=format:"%cd" --date=short HEAD)
+VERSION_OVERRIDE ?= v2026.03-191.chinese-vertical.r3.2
 # We want VERSION to carry the version of the KOReader main repo, not that of koreader-base
-VERSION := $(shell git describe HEAD)
+VERSION := $(or $(VERSION_OVERRIDE),$(shell git describe HEAD))
 RELEASE_EPOCH := $(shell git log -1 --format='%cs' $(word 1,$(subst -, ,$(VERSION))))
 # Only append date if we're not on a whole version, like v2018.11
+ifeq ($(VERSION_OVERRIDE),)
 ifneq (,$(findstring -,$(VERSION)))
 	VERSION := $(VERSION)_$(RELEASE_DATE)
+endif
 endif
 
 MACHINE=$(TARGET_MACHINE)

@@ -59,4 +59,17 @@ describe("Readerdictionary module", function()
         end
         readerui.languagesupport.extraDictionaryFormCandidates:revert()
     end)
+
+    it("should collapse whitespace in vertical CJK lookup words", function()
+        local document = readerui.document
+        local original_is_vertical = document.isVerticalWritingMode
+        document.isVerticalWritingMode = function()
+            return true
+        end
+
+        assert.are.same("茶花女", dictionary:cleanVerticalCJKSelection("茶 \n花　女"))
+        assert.are.same("hello world", dictionary:cleanVerticalCJKSelection("hello world"))
+
+        document.isVerticalWritingMode = original_is_vertical
+    end)
 end)

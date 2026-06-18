@@ -329,6 +329,38 @@ In the top menu → Settings → Status bar, you can choose whether the bottom m
 - 'web' renders as web browsers do, allowing negative margins and possible page overflow.]]),
             },
             {   -- ReaderTypeset
+                name = "chinese_vertical_mode",
+                name_text = _("Chinese vertical mode"),
+                toggle = {
+                    C_("Chinese vertical mode", "off"),
+                    C_("Chinese vertical mode", "auto"),
+                    C_("Chinese vertical mode", "on"),
+                },
+                values = {"off", "auto", "on"},
+                default_value = "off",
+                args = {"off", "auto", "on"},
+                event = "SetChineseVerticalMode",
+                name_text_hold_callback = optionsutil.showValues,
+            },
+            {   -- ReaderTypeset
+                name = "vertical_page_turn",
+                name_text = _("Vertical page turn"),
+                enabled_func = function(configurable)
+                    return configurable.chinese_vertical_mode ~= "off"
+                end,
+                toggle = {
+                    --- @translators LTR is left to right.
+                    _("LTR"),
+                    --- @translators RTL is right to left.
+                    _("RTL"),
+                },
+                values = {"ltr", "rtl"},
+                default_value = "rtl",
+                args = {"ltr", "rtl"},
+                event = "SetVerticalPageTurn",
+                name_text_hold_callback = optionsutil.showValues,
+            },
+            {   -- ReaderTypeset
                 name = "render_dpi",
                 name_text = _("Zoom (dpi)"),
                 more_options = true,

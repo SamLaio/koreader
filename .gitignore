@@ -35,6 +35,16 @@ emu
 luacov.stats.out
 trace-out.txt
 koreader-*
+TODO.chinese-vertical-epub.md
+AGENTS.md
+release/
+
+# Local Android release signing keys and passwords.
+*.jks
+*.keystore
+*.p12
+*.signing.properties
+koreader-sam-release-2026.*
 
 i18n
 

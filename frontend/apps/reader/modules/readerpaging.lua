@@ -380,7 +380,7 @@ function ReaderPaging:onSwipe(_, ges)
         return true
     elseif direction == "west" then
         if G_reader_settings:nilOrFalse("page_turns_disable_swipe") then
-            if self.view.inverse_reading_order then
+            if self.view:isMirroredPageTurn() then
                 self:onGotoViewRel(-1)
             else
                 self:onGotoViewRel(1)
@@ -389,7 +389,7 @@ function ReaderPaging:onSwipe(_, ges)
         end
     elseif direction == "east" then
         if G_reader_settings:nilOrFalse("page_turns_disable_swipe") then
-            if self.view.inverse_reading_order then
+            if self.view:isMirroredPageTurn() then
                 self:onGotoViewRel(1)
             else
                 self:onGotoViewRel(-1)
