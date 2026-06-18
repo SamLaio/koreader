@@ -38,6 +38,8 @@ koreader-*
 TODO.chinese-vertical-epub.md
 AGENTS.md
 release/
+release/README-*.md
+release/RELEASE_NOTES-*.md
 
 # Local Android release signing keys and passwords.
 *.jks
